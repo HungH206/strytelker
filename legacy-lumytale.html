@@ -1,0 +1,130 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+  <title>LumiTale</title>
+  <style>
+    body {
+      background: #171d37;
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      text-align: center;
+      padding: 35px 20px;
+    }
+    main { max-width: 650px; margin: auto; }
+    .robot { font-size: 85px; margin: 20px; }
+    .story {
+      background: #293254;
+      border-radius: 20px;
+      padding: 25px;
+      line-height: 1.7;
+      margin: 20px 0;
+    }
+    button {
+      background: #f7d898;
+      color: #20243a;
+      border: 0;
+      padding: 14px 22px;
+      border-radius: 12px;
+      margin: 6px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    #status { color: #a5b9dc; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>🌙 LumiTale</h1>
+  <p>Your interactive storytelling friend</p>
+  <div class="robot" id="robot">🤖</div>
+  <p id="status">Ready to tell a story</p>
+
+  <div class="story">
+    <h2 id="title">The Magical Forest</h2>
+    <p id="text">Press Start to begin.</p>
+  </div>
+
+  <div id="choices"></div>
+  <button onclick="startStory()">Start Story</button>
+  <button onclick="stopSpeaking()">Stop Voice</button>
+</main>
+
+<script>
+const stories = [
+  {
+    text: "Once upon a time, a little fox found a magical door in the forest. Should the fox open the door or follow the butterflies?",
+    choices: [
+      ["Open the door", 1],
+      ["Follow the butterflies", 2]
+    ]
+  },
+  {
+    text: "The fox opened the door and found a room filled with glowing stars. A friendly owl offered to help the fox find a missing star.",
+    choices: [["Help the owl", 3]]
+  },
+  {
+    text: "The fox followed the butterflies to a peaceful garden where the flowers glowed like tiny lanterns.",
+    choices: [["Explore the garden", 3]]
+  },
+  {
+    text: "After a magical adventure, the fox returned home, curled up beneath a warm blanket, and fell peacefully asleep. The end.",
+    choices: []
+  }
+];
+
+function stopSpeaking() {
+  speechSynthesis.cancel();
+  document.getElementById("robot").textContent = "🤖";
+  document.getElementById("status").textContent = "Paused";
+}
+
+function speak(text) {
+  speechSynthesis.cancel();
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 0.85;
+  utterance.pitch = 1.1;
+
+  utterance.onstart = () => {
+    document.getElementById("robot").textContent = "😊";
+    document.getElementById("status").textContent = "LumiTale is speaking";
+  };
+
+  utterance.onend = () => {
+    document.getElementById("robot").textContent = "🤖";
+    document.getElementById("status").textContent =
+      "Choose what happens next";
+  };
+
+  speechSynthesis.speak(utterance);
+}
+
+function showScene(index) {
+  const scene = stories[index];
+
+  document.getElementById("text").textContent =
+    scene.text;
+
+  const choices = document.getElementById("choices");
+  choices.innerHTML = "";
+
+  scene.choices.forEach(([label, next]) => {
+    const button = document.createElement("button");
+    button.textContent = label;
+    button.onclick = () => showScene(next);
+    choices.appendChild(button);
+  });
+
+  speak(scene.text);
+}
+
+function startStory() {
+  showScene(0);
+}
+</script>
+</body>
+</html>

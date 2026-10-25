@@ -1,0 +1,34 @@
+[
+  {
+    "id": "college-500",
+    "name": "College Rebate",
+    "offer_type": "rebate",
+    "rebate_usd": 500,
+    "payment_methods": ["loan"],
+    "stacking_group": "college-or-military",
+    "eligibility": "Eligible current college students or recent graduates, subject to Toyota program requirements and verification.",
+    "source_url": "https://www.toyota.com/college-rebate/",
+    "terms_source_url": "https://www.toyota.com/newengland/deals-incentives/multiple_vehicle_4c833d3f-3537-44f8-972a-de9bec005a77/",
+    "valid_until": null,
+    "region": "Dealer confirmation required",
+    "is_simulated": true,
+    "verification_status": "Program reference; individual eligibility and local availability not verified",
+    "observed_on": "2026-10-25"
+  },
+  {
+    "id": "military-500",
+    "name": "Military Cash Rebate",
+    "offer_type": "rebate",
+    "rebate_usd": 500,
+    "payment_methods": ["loan"],
+    "stacking_group": "college-or-military",
+    "eligibility": "Eligible military personnel, retirees, qualifying veterans or household members, subject to Toyota program requirements and verification.",
+    "source_url": "https://www.toyota.com/military-rebate/",
+    "terms_source_url": "https://www.toyota.com/newengland/deals-incentives/multiple_vehicle_4c833d3f-3537-44f8-972a-de9bec005a77/",
+    "valid_until": null,
+    "region": "Dealer confirmation required",
+    "is_simulated": true,
+    "verification_status": "Program reference; individual eligibility and local availability not verified",
+    "observed_on": "2026-10-25"
+  }
+]
