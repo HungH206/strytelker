@@ -175,11 +175,28 @@ export function createToyoRouter(
     session.browserArm = null;
     arduino?.disarm(token);
     try {
-      const receipt = await reservations().save(
-        token,
-        { ...session.state, reservationSubmissionSource: source },
-        session.reservationDraft,
-      );
+      let receipt;
+      try {
+        receipt = await reservations().save(
+          token,
+          { ...session.state, reservationSubmissionSource: source },
+          session.reservationDraft,
+        );
+      } catch (cause) {
+        // Log only a bounded error code: provider messages can contain credentials
+        // or customer data. Preserve the reviewed draft so the buyer can retry.
+        const code =
+          typeof cause?.code === "string" &&
+          /^[A-Z0-9_]{1,64}$/.test(cause.code)
+            ? cause.code
+            : "UNKNOWN";
+        console.error("Reservation storage save failed", { code });
+        const error = new Error(
+          "Reservation storage is unavailable. Your reviewed details are still here. Retry saving, or ask the app operator to check the backend database configuration and logs.",
+        );
+        error.name = "ReservationStorageError";
+        throw error;
+      }
       session.reservationDraft = null;
       session.reservationContact = null;
       session.state = {
@@ -242,10 +259,9 @@ export function createToyoRouter(
   router.post("/reservation", async (req, res) => {
     try {
       res.json(await submitReservation(req.toyo, req.toyoToken, "simulator"));
-    } catch {
-      res.status(409).json({
-        error:
-          "Could not save the reviewed reservation. Check the details and database connection, then retry.",
+    } catch (error) {
+      res.status(error.name === "ReservationStorageError" ? 503 : 409).json({
+        error: error.message,
       });
     }
   });

@@ -133,6 +133,30 @@ try {
       await post("browser-serial/press", { nonce: arm.nonce, count: 1 }, 409);
       await tool("save_reservation", { userConfirmed: true }, 400);
     } else if (mode === "browser") {
+      const originalSave = store.save;
+      const originalError = console.error;
+      const diagnostics = [];
+      try {
+        store.save = () => {
+          throw Object.assign(new Error("private database credentials"), {
+            code: "ECONNREFUSED",
+          });
+        };
+        console.error = (...args) => diagnostics.push(args);
+        const failed = await post("reservation", {}, 503);
+        assert.match(failed.error, /storage is unavailable/);
+        assert.ok(!failed.error.includes("private database credentials"));
+        assert.deepEqual(diagnostics, [
+          ["Reservation storage save failed", { code: "ECONNREFUSED" }],
+        ]);
+        const retained = await request("session");
+        assert.equal(retained.revision, state.revision);
+        assert.equal(retained.reservationReady, true);
+        assert.ok(!retained.reservationId);
+      } finally {
+        store.save = originalSave;
+        console.error = originalError;
+      }
       let arm = await post("browser-serial/arm");
       assert.equal(arm.gestures, false);
       await post("browser-serial/press", { nonce: arm.nonce, count: 2 }, 409);
