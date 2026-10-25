@@ -39,6 +39,45 @@ The server accepts one listed offer ID, disallows stacking College and Military,
 
 `data/toyota_world.sqlite` is a project-local copy of the supplied seed database with both offers populated in its `offers` table (`is_simulated = 1`). The original Downloads database is preserved. The app reads JSON at runtime; after editing `data/offers.json`, run `python3 scripts/sync-offers.py` to update the SQLite snapshot, then restart the app.
 
+## Gemini Live seller voice
+
+Click **Voice mode** to activate TOYO's two-way seller conversation. Voice is never started on page load. The browser asks for microphone permission and displays **Connecting to Gemini Live…**; **Live · Listening** appears only after Gemini acknowledges session setup. It then switches between Listening and Speaking. Mute disables the microphone tracks; Stop closes the connection and releases audio resources. The existing “Read TOYO’s guidance” button remains a separate browser-narration fallback and is disabled while Live voice runs.
+
+Local configuration:
+
+```dotenv
+GEMINI_API_KEY=your_server_side_key
+GEMINI_LIVE_MODEL=gemini-3.8-live
+GEMINI_LIVE_VOICE=Kore
+```
+
+Restart `npm run dev`, open `http://localhost:5173` in a browser supporting microphone capture and AudioWorklet (for example desktop Chrome), then click Voice mode and allow the microphone. Use a Live model available to your Google AI project; the model and voice name are configurable. An API key merely being present does not prove model access. Token-creation errors and socket errors are shown; the app does not label a failed connection as Live. HTTPS is required outside localhost. Hosted Gemini keys and Live settings belong on Render, not in `VITE_` variables.
+
+TOYO's full seller instruction is `TOYO_VOICE_INSTRUCTIONS` in `server/voice-agent.mjs`:
+
+1. **Agent HQ:** discuss needs and budget, clarify the category and price band, save agreed preferences and recommend only existing matches.
+2. **Garage stash:** explain and inspect catalog cars. One D2 press moves to the next; two presses or the Choose button select the displayed car. The agent cannot commit a vehicle selection itself.
+3. **Financial district:** collect user-provided savings, reserve, down payment, ownership budget, APR, method and term. `prepare_finance` validates and previews a draft while keeping the user on the finance step. TOYO reads every detail back; a separate affirmative response or **Confirm these details** commits that exact draft. Corrections replace the draft and require readback again. These are assumed rebate eligibility and illustrative finance inputs, not real credit underwriting.
+4. **Payment + insurance:** explain the calculator's actual totals and affordability reasons, then prepare/read back the insurance assumption. A confirmed insurance draft marks review complete. Pending readbacks block final checkout. The user alone presses the Arduino magic wand or browser confirmation button to finish a simulated purchase or savings plan.
+
+Voice tool calls are validated by the backend with the current journey revision, a short-lived voice lease, allowed function names and schemas, and draft IDs. No purchase-confirmation or vehicle-selection-commit tool is exposed to Gemini. Spoken confirmation of draft details is interpreted by the model; the final simulated purchase remains explicitly button-gated. Mouse and D2 state changes update the Live context so TOYO continues from the correct stage. Stopping or renewing Voice mode revokes the old tool lease and clears pending readbacks.
+
+The backend mints a single-use ephemeral token constrained to the model, seller instruction, voice and tool declarations. Microphone audio travels from the browser directly to Gemini Live; it does not go through the Vercel gateway. Input is mono 16 kHz PCM from an AudioWorklet; output PCM is queued through Web Audio, with interruption handling. A transcript is kept in the tab's memory, with no raw audio recording stored by the app. Voice sessions stop after eight minutes; reconnecting picks up the existing backend shopping state. Reloading the whole page still starts a new shopping session.
+
+The **computer microphone** supplies voice; Grove A0 remains a raw sound-level diagnostic. D2 and the active D5 buzzer retain their existing behavior. Tests use synthetic microphone audio and mocked Gemini tokens/socket messages; actual account access, speech recognition quality and a real Gemini audio round trip still require a live test. References: [Google Live capabilities](https://ai.google.dev/gemini-api/docs/live-api/capabilities), [ephemeral tokens](https://ai.google.dev/gemini-api/docs/live-api/ephemeral-tokens), and [tool use](https://ai.google.dev/gemini-api/docs/live-api/tools).
+
+## Current prices and offers with SerpAPI
+
+The garage includes **Search current prices** and **Search current offers**, with an optional five-digit US ZIP code. Add `SERPAPI_API_KEY` to the Node backend's environment (`.env` locally, Render environment variables when hosted) and restart/redeploy that backend. Obtain a key through [SerpAPI](https://serpapi.com/manage-api-key). Never use a `VITE_` key or put it in browser code. The feature reports whether search is connected without returning the key.
+
+`POST /api/toyo/market-search` accepts the current session revision, selected vehicle ID, `kind` (`prices` or `offers`), and optional `zip`. The server constructs the Google query from the catalog vehicle, calls [SerpAPI's Google Search endpoint](https://serpapi.com/search-api), and returns up to six organic results with title, HTTPS source link, snippet, optional source date, and retrieval time. The ZIP is included in the search query; it is not a guaranteed inventory radius filter. Search requests occur only on explicit form submission, not on page load or Arduino input.
+
+Matching queries are cached for ten minutes in the backend process, concurrent identical queries share a provider request, and the cache is bounded to 100 entries. SerpAPI and Google may also cache or index older content. Retrieval time does not establish that a price or promotion is still valid. Provider errors never expose raw credential-bearing URLs or response bodies to the browser.
+
+Search results are research links, not a live inventory feed, verified dealer quotes, or automatically approved rebates. They do not change the catalog, HQ price band, recommendation, quote, or selected rebate. Prices and terms must be checked on the source page before being adopted as actual offer data. Changed vehicle selections cancel the client search and reject stale server responses.
+
+This integration uses the existing backend deployment and Vercel gateway; SerpAPI is a data source, not a replacement for the Node service. Tests use mocked results and do not spend search credits. Run `npm run verify:market-search` for the HTTP contract checks.
+
 ## Model selection
 
 Set `GEMINI_API_KEY` in `.env` and restart to enable model selection. The server first filters by body style and price band. Gemini then selects only from those valid IDs; unknown IDs are rejected. Model recommendations occur after the completed questionnaire or an explicit rerank click. Without a key, or when Gemini fails, deterministic catalog matches remain available with the lowest MSRP first. AI text never sets prices, loan amounts, affordability, or confirmation state.
@@ -50,7 +89,23 @@ ARDUINO_PORT=
 PORT=3001
 ```
 
-The main TOYO panel supports browser narration. Existing LumiWorld and legacy Drive APIs retain their Gemini/ElevenLabs configuration; optional `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` are server-only. Never commit `.env` or expose provider keys through `VITE_` variables.
+The main TOYO panel supports opt-in Gemini Live voice and separate browser narration. Existing LumiWorld and legacy Drive APIs retain their Gemini/ElevenLabs configuration; optional `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` are server-only. Never commit `.env` or expose provider keys through `VITE_` variables.
+
+## Deploy this app: Vercel frontend + Render backend
+
+The repo includes `render.yaml` for a single Node service and `vercel.json` plus `api/proxy.mjs` for a same-origin API gateway. The gateway is stateless; shopping sessions and browser-serial nonce consumption stay in the running Render process. This avoids relying on serverless function memory for session continuity.
+
+1. Push the tested deployment files to the GitHub repository.
+2. In Render, create a Blueprint from `https://github.com/HungH206/strytelker` using `render.yaml`. It specifies a **free** Node 24 service, a build with development dependencies, `npm start`, `HOST=0.0.0.0`, and the `/api/health` check. Render supplies `PORT`; leave `ARDUINO_PORT` empty.
+3. Copy the actual HTTPS origin assigned to the service. Verify `https://<actual-render-host>/api/health` returns JSON with `status: "ok"`. Do not assume a particular hostname from the service name.
+4. In the existing Vercel project's environment variables, set **`TOYO_BACKEND_URL`** to that Render origin, such as `https://your-actual-service.onrender.com`, with no `/api` suffix or path. Set it for the deployment environments you use.
+5. Redeploy Vercel. Its configuration uses the Vite frontend and forwards `/api/*` through the Node function to Render. Session tokens and request bodies are preserved; personalized API responses are never cached. Frontend requests remain same-origin, so a separate CORS configuration is unnecessary for this setup.
+6. Verify both `https://strytelker.vercel.app/api/health` and `/api/toyo/config` return JSON, then test HQ → garage → finance → insurance → confirmation.
+7. Add `GEMINI_API_KEY` on **Render** only if you want model ranking, and `SERPAPI_API_KEY` if you want web price/offer searches, then redeploy that service. Optional ElevenLabs keys also belong on Render. The app works with rule-based matching and browser narration without these keys. No provider secret is needed in the Vercel frontend.
+
+Until `TOYO_BACKEND_URL` is configured, the Vercel gateway returns a JSON **503** with setup instructions instead of a text 404. If Render is unreachable or still waking, it returns an actionable JSON 502/504. The free Render plan can sleep when idle, and any backend restart resets these in-memory sessions; reload to start a new journey. Keep the service at one instance. Durable sessions or multiple replicas require a shared session store before scaling.
+
+`npm run verify:deployment` starts a real local backend with cloud-style binding and runs the gateway through a complete simulated purchase, including rebate, insurance, browser-serial confirmation, and replay rejection. It does not contact paid providers or real hardware. Configuration references: [Render Blueprints](https://render.com/docs/blueprint-spec), [Render port binding](https://render.com/docs/web-services), and [Vercel Node functions](https://vercel.com/docs/functions/runtimes/node-js).
 
 ## Hosted website: connect Arduino in the browser
 
@@ -105,6 +160,9 @@ Serial protocol at 9600 baud: `ARM <nonce> NAV` enables gesture counting, return
 
 ```sh
 npm test
+npm run verify:voice # mock Gemini token and voice-tool contract; no paid calls
+npm run verify:market-search # mock SerpAPI contract; no paid searches
+npm run verify:deployment # real local backend behind the hosting gateway
 npm run verify:browser-serial # temporary server; checks browser-reported input
 npm run verify:firmware # host timing harness; requires a C++17 compiler
 npm run verify:toyo   # temporary localhost server, fake serial and model; no paid calls
@@ -112,4 +170,27 @@ npm run verify:drive # preserved legacy API contract checks
 npm run build
 ```
 
-Sessions live in server memory and expire after two hours. Reloading starts a new session. This prototype binds to localhost. Public deployment requires a separate hosting and persistence design.
+Sessions live in server memory and expire after two hours. Reloading starts a new session. Local development binds to localhost. Render uses `HOST=0.0.0.0` from its Blueprint. Hosted sessions remain process-local as described in the deployment section.
+
+### Customer reservations and downloads
+
+After an affordable plan is confirmed with the magic wand, the completion screen asks for the customer's name, phone number (including country code), and permission to save. Voice mode closes before the contact form. Contact details are excluded from Gemini's shopping context. Saving creates a **demo reservation**, not a dealer booking or SMS confirmation.
+
+The backend stores reservations in a separate SQLite database at `.local/reservations.sqlite` (ignored by Git), configurable through `RESERVATIONS_DB_PATH`. Each record contains contact details and a server-generated snapshot of the selected car, finance assumptions, calculated quote, selected rebate and insurance assumptions. Retries for the same journey return the existing record. JSON and CSV downloads require the current private journey token; download before refreshing or starting a new journey. Saved database records survive a local server restart, but browser sessions and download access do not. No public reservation listing is exposed.
+
+Use Node 24 for the native SQLite module. Keep the database private and backed up. For hosting, point `RESERVATIONS_DB_PATH` at a persistent disk; the current free Render configuration has ephemeral storage and will lose records when the instance is replaced. Do not rely on it for real customer reservations without persistent storage. The CSV export escapes spreadsheet formula prefixes. Phone formatting is validated; ownership is not verified.
+
+### Tiger Data and the separate staff reservation monitor
+
+Open `http://localhost:5173/?monitor` while `npm run dev` is running. This staff view is separate from the customer journey and includes search, status filters, car/contact details, finance and insurance summaries, JSON/CSV downloads, and a status-change history. It shows the latest 200 reservations; use Refresh to retrieve new entries. Access uses a shared staff key kept only in the tab's memory. This is a small-team monitor, without individual staff accounts or per-person audit attribution.
+
+1. Create a PostgreSQL service in Tiger Console and copy its PostgreSQL connection URL into the backend `.env` as `TIGER_DATABASE_URL`. Keep this credential on the backend only, never in a `VITE_` variable or Git. Tiger Data connection guidance: https://www.tigerdata.com/docs/integrate/find-connection-details
+2. Generate a staff key with `openssl rand -hex 32` and set `RESERVATION_ADMIN_TOKEN` in `.env`. The monitor is disabled until a key of at least 32 characters is configured. Enter this key on the monitor sign-in screen. Restart the backend after changing environment variables.
+3. Run `npm run dev`. On the first reservation or authenticated monitor request, the backend creates the tables in [server/sql/reservations.sql](server/sql/reservations.sql). The database user needs permission to create these tables in its target schema. Connections use verified TLS; if your service requires its own CA bundle, set `TIGER_CA_CERT` to the PEM certificate (literal `\n` line separators are supported). Certificate verification is never disabled.
+4. Make a demo reservation through the customer journey, then refresh the monitor. When connected, its storage label reads **Tiger Data**. Without `TIGER_DATABASE_URL`, the same monitor works against local SQLite. A configured but unreachable Tiger service returns an error; it does not silently store customer data elsewhere.
+
+Tiger storage uses ordinary PostgreSQL tables: `toyo_customers` → `toyo_reservations` → `toyo_reservation_plans` and `toyo_reservation_events`. Customer, reservation, plan, and initial status writes are atomic. Duplicate saves for the same journey produce one reservation, including concurrent retries. The original receipt remains an immutable demo snapshot; staff follow-up status is tracked separately. “Confirmed” does not create a real dealer booking. Existing local SQLite reservations remain local and are not uploaded automatically.
+
+For the hosted app, configure `TIGER_DATABASE_URL`, optional `TIGER_CA_CERT`, and `RESERVATION_ADMIN_TOKEN` on the **Node backend service**. Vercel continues using `TOYO_BACKEND_URL` for the gateway; it does not need the database URL or staff key. Open `https://your-site/?monitor` over HTTPS. Tiger Console's Data view can also query these tables directly to build internal reports.
+
+Verification: `npm test`, `npm run build`, and `npm run verify:reservations`. The integration check requires `TEST_PG_SOCKET` pointing to a disposable local PostgreSQL Unix socket (optional `TEST_PG_PORT`, default 55439); it writes synthetic test records. Never point it at the customer database.

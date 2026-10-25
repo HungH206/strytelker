@@ -1,6 +1,10 @@
+import ReservationForm from "./ReservationForm";
 import { useEffect, useRef, useState } from "react";
 import { QuoteDetails, type Finance, type Quote } from "./Drive";
 import type { Stop } from "./town";
+import MarketSearch from "./MarketSearch";
+import VoiceMode from "./VoiceMode";
+import { readApiJson } from "./api-json.mjs";
 import { useArduinoControls } from "./useArduinoControls";
 
 export type ShoppingStage =
@@ -35,7 +39,7 @@ type RebateOffer = {
   source_url: string;
   verification_status: string;
 };
-type ShoppingState = {
+export type ShoppingState = {
   revision: number;
   stage: ShoppingStage;
   question: "kind" | "range";
@@ -122,6 +126,10 @@ export default function ShoppingPanel({
   const [offers, setOffers] = useState<RebateOffer[]>([]);
   const [offerId, setOfferId] = useState<string | null>(null);
   const [offerEligibility, setOfferEligibility] = useState(false);
+  const [voiceAvailable, setVoiceAvailable] = useState(false);
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [voiceDraftActive, setVoiceDraftActive] = useState(false);
+  const [searchConnected, setSearchConnected] = useState(false);
   const [gemini, setGemini] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -137,7 +145,7 @@ export default function ShoppingPanel({
   const lifecycle = useRef(0);
   const recommendedProfile = useRef("");
 
-  async function api(path: string, body?: unknown) {
+  async function api(path: string, body?: unknown, signal?: AbortSignal) {
     const response = await fetch(`/api/toyo/${path}`, {
       method: body === undefined ? "GET" : "POST",
       headers: {
@@ -145,14 +153,19 @@ export default function ShoppingPanel({
         "X-Journey-Token": token.current,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(35000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(35000)])
+        : AbortSignal.timeout(35000),
     });
-    const result = await response.json();
-    if (!response.ok)
-      throw new Error(result.error || "TOYO could not complete that action.");
-    return result;
+    return readApiJson(response, `/api/toyo/${path}`);
   }
-  const arduino = useArduinoControls({ state, busy, lock, api, setState });
+  const arduino = useArduinoControls({
+    state,
+    busy: busy || voiceDraftActive,
+    lock,
+    api,
+    setState,
+  });
   async function start() {
     if (lock.current) return;
     lock.current = true;
@@ -195,6 +208,8 @@ export default function ShoppingPanel({
           setInventory(config.inventory);
           setOffers(config.offers || []);
           setGemini(config.gemini);
+          setSearchConnected(!!config.serpApi);
+          setVoiceAvailable(!!config.liveVoice);
         }
       })
       .catch(() => {
@@ -278,12 +293,12 @@ export default function ShoppingPanel({
   }
   useEffect(() => {
     if (state?.stage === "hq") recommendedProfile.current = "";
-    if (state?.stage !== "dealer" || !gemini || busy) return;
+    if (state?.stage !== "dealer" || !gemini || busy || voiceActive) return;
     const profileKey = JSON.stringify(state.profile);
     if (recommendedProfile.current === profileKey) return;
     recommendedProfile.current = profileKey;
     void recommend();
-  }, [state?.stage, gemini, busy]);
+  }, [state?.stage, gemini, busy, voiceActive]);
 
   useEffect(() => {
     let cancelled = false;
@@ -354,11 +369,41 @@ export default function ShoppingPanel({
         <div>
           <small>TOYO · YOUR SHOPPING AGENT</small>
           <p aria-live="polite">{guidance}</p>
-          <button className="toyo-text-button" onClick={readGuidance}>
+          <button
+            className="toyo-text-button"
+            disabled={voiceActive}
+            onClick={readGuidance}
+          >
             {speaking ? "Stop voice" : "♫ Read TOYO’s guidance"}
           </button>
         </div>
       </div>
+      {state && state.stage !== "complete" && (
+        <VoiceMode
+          key={token.current}
+          state={state}
+          available={voiceAvailable}
+          api={api}
+          setState={setState}
+          lock={lock}
+          onActiveChange={setVoiceActive}
+          onDraft={(draft) => {
+            setVoiceDraftActive(!!draft);
+            if (draft?.event.finance) {
+              setFinance(draft.event.finance);
+              setOfferId(draft.event.offerId || null);
+              setOfferEligibility(!!draft.event.offerId);
+            }
+            if (draft?.event.insurance) {
+              setInsuranceMode(
+                draft.event.insurance.mode as "included" | "additional",
+              );
+              setInsuranceMonthly(draft.event.insurance.monthly);
+              setAccepted(false);
+            }
+          }}
+        />
+      )}
       <div className="hardware-card">
         <div>
           <b>
@@ -555,6 +600,17 @@ export default function ShoppingPanel({
                       </a>
                     </span>
                   </div>
+                  <MarketSearch
+                    key={vehicle.id}
+                    vehicleId={vehicle.id}
+                    vehicleName={vehicle.name}
+                    revision={state.revision}
+                    connected={searchConnected}
+                    disabled={busy}
+                    search={(body, signal) =>
+                      api("market-search", body, signal)
+                    }
+                  />
                   {!state.matches.includes(vehicle.id) && (
                     <p className="toyo-warning">
                       This vehicle is outside your HQ preferences. You can still
@@ -646,7 +702,10 @@ export default function ShoppingPanel({
                   });
                 }}
               >
-                <fieldset disabled={busy} className="toyo-finance">
+                <fieldset
+                  disabled={busy || voiceActive}
+                  className="toyo-finance"
+                >
                   <legend>Payment plan assumptions</legend>
                   <div className="toyo-two-buttons">
                     {(["loan", "cash"] as const).map((method) => (
@@ -841,7 +900,7 @@ export default function ShoppingPanel({
                 }}
               >
                 <fieldset
-                  disabled={busy || state.reviewed}
+                  disabled={busy || state.reviewed || voiceActive}
                   className="toyo-finance"
                 >
                   <legend>Insurance planning</legend>
@@ -928,7 +987,7 @@ export default function ShoppingPanel({
                     </p>
                     <button
                       className="primary-button"
-                      disabled={busy}
+                      disabled={busy || voiceDraftActive}
                       onClick={() => act({ type: "CONFIRM" })}
                     >
                       ✦ Wave the magic wand
@@ -985,6 +1044,13 @@ export default function ShoppingPanel({
                   created.
                 </p>
               </div>
+              {state.outcome === "simulated_purchase" && (
+                <ReservationForm
+                  key={token.current}
+                  token={token.current}
+                  revision={state.revision}
+                />
+              )}
               <button
                 className="primary-button"
                 disabled={busy}

@@ -1,0 +1,118 @@
+body {
+  margin: 0;
+  background: #f5f5f7;
+  color: #202027;
+  font-family: system-ui, sans-serif;
+}
+.monitor {
+  max-width: 1200px;
+  margin: auto;
+  padding: 40px 24px;
+}
+.monitor header span {
+  color: #ac173c;
+  font-size: 12px;
+  letter-spacing: 2px;
+  font-weight: bold;
+}
+.monitor h1 {
+  font-size: 36px;
+  margin-bottom: 8px;
+}
+.monitor label {
+  display: grid;
+  gap: 6px;
+}
+.monitor input,
+.monitor select,
+.monitor button {
+  font: inherit;
+  padding: 10px 14px;
+  border: 1px solid #c7c7d0;
+  border-radius: 8px;
+}
+.monitor button {
+  cursor: pointer;
+  background: white;
+  color: #9b1539;
+}
+.monitor button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.monitor form {
+  display: grid;
+  gap: 18px;
+  max-width: 440px;
+  padding: 24px;
+  background: white;
+  border-radius: 16px;
+}
+.monitor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin: 24px 0;
+}
+.monitor-toolbar input {
+  min-width: 260px;
+}
+.monitor-stats {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.monitor-stats > div {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  flex: 1;
+  text-transform: capitalize;
+}
+.monitor-stats strong {
+  display: block;
+  font-size: 28px;
+}
+.monitor-table {
+  overflow-x: auto;
+  background: white;
+  border-radius: 12px;
+}
+.monitor table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.monitor th,
+.monitor td {
+  padding: 14px;
+  border-bottom: 1px solid #eee;
+}
+.monitor-detail {
+  background: white;
+  margin-top: 28px;
+  padding: 28px;
+  border-radius: 16px;
+  overflow-wrap: anywhere;
+}
+.monitor dl > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  border-bottom: 1px solid #eee;
+  padding: 8px 0;
+}
+.monitor dt {
+  min-width: 180px;
+  font-weight: 600;
+}
+.monitor dd {
+  margin: 0;
+  flex: 1;
+}
+.monitor-error {
+  padding: 16px;
+  background: #ffe4e8;
+  border-radius: 8px;
+}

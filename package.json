@@ -13,7 +13,11 @@
     "format": "prettier --write src server scripts tests",
     "verify:toyo": "node scripts/verify-toyo.mjs",
     "verify:firmware": "node scripts/verify-firmware.mjs",
-    "verify:browser-serial": "node scripts/verify-browser-serial.mjs"
+    "verify:browser-serial": "node scripts/verify-browser-serial.mjs",
+    "verify:deployment": "node scripts/verify-deployment.mjs",
+    "verify:market-search": "node scripts/verify-market-search.mjs",
+    "verify:voice": "node scripts/verify-voice.mjs",
+    "verify:reservations": "node scripts/verify-reservations.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.0.0",
@@ -21,6 +25,7 @@
     "@react-three/fiber": "^9.8.2",
     "dotenv": "^17.0.0",
     "express": "^5.0.0",
+    "pg": "^8.23.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "serialport": "^13.0.0",

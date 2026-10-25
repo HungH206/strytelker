@@ -4,3 +4,10 @@ node_modules/
 dist/
 .env.*
 !.env.example
+
+.vercel/
+
+# Private customer reservation database
+.local/
+*.sqlite-wal
+*.sqlite-shm

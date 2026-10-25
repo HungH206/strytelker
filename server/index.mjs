@@ -1,3 +1,5 @@
+import { createConfiguredReservationStore } from "./tiger-reservations.mjs";
+import { createReservationMonitor } from "./reservation-monitor.mjs";
 import express from "express";
 import { createToyoRouter } from "./toyo-api.mjs";
 import { createArduinoBridge } from "./arduino.mjs";
@@ -7,6 +9,10 @@ import { createDriveRouter } from "./drive-api.mjs";
 import { requestSchema, sceneSchema, demoScene } from "./story.mjs";
 const app = express();
 app.use(express.json({ limit: "24kb" }));
+app.use("/api", (_req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
 const ai = process.env.GEMINI_API_KEY
   ? new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
@@ -15,7 +21,12 @@ const ai = process.env.GEMINI_API_KEY
   : null;
 const arduino = createArduinoBridge();
 app.use("/api/drive", createDriveRouter(ai, arduino));
-app.use("/api/toyo", createToyoRouter(ai, arduino));
+const reservationStore = createConfiguredReservationStore();
+app.use(
+  "/api/toyo",
+  createToyoRouter(ai, arduino, undefined, undefined, reservationStore),
+);
+app.use("/api/monitor", createReservationMonitor(reservationStore));
 app.get("/api/health", (_req, res) =>
   res.json({ status: "ok", geminiConfigured: !!ai }),
 );
@@ -66,12 +77,17 @@ app.post("/api/story", async (req, res) => {
     });
   }
 });
+app.use("/api", (_req, res) =>
+  res.status(404).json({ error: "Unknown API endpoint." }),
+);
 app.use(express.static("dist"));
 app.use((err, _req, res, _next) =>
   res
     .status(err.status || 500)
     .json({ error: "The request could not be read." }),
 );
-app.listen(Number(process.env.PORT) || 3001, "127.0.0.1", () =>
-  console.log("LumiWorld backend: http://localhost:3001"),
+const port = Number(process.env.PORT) || 3001;
+const host = process.env.HOST || "127.0.0.1";
+app.listen(port, host, () =>
+  console.log(`TOYO backend listening on ${host}:${port}`),
 );

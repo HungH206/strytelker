@@ -1,6 +1,18 @@
+import { createReservationStore, reservationCsv } from "./reservations.mjs";
 import { Router } from "express";
+import {
+  createVoiceService,
+  executeVoiceTool,
+  voiceContext,
+  voiceTools,
+} from "./voice-agent.mjs";
 import { arduinoAction } from "./arduino-actions.mjs";
 import { offers } from "./offers.mjs";
+import {
+  createMarketSearch,
+  marketSearchSchema,
+  MarketSearchError,
+} from "./market-search.mjs";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import {
@@ -37,7 +49,13 @@ const eventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("INSURANCE"), insurance: z.unknown() }).strict(),
 ]);
 
-export function createToyoRouter(ai, arduino) {
+export function createToyoRouter(
+  ai,
+  arduino,
+  marketSearch = createMarketSearch(),
+  voiceService = createVoiceService(ai),
+  reservationStore,
+) {
   const router = Router();
   const sessions = new Map();
   const ttl = 2 * 60 * 60 * 1000;
@@ -61,12 +79,23 @@ export function createToyoRouter(ai, arduino) {
     next();
   }
   function apply(session, event, source) {
+    if (event.type === "CONFIRM" && session.voiceDraft)
+      throw new Error(
+        "Confirm or cancel the pending voice readback before final checkout.",
+      );
     session.browserArm = null;
+    session.voiceDraft = null;
     session.state = shoppingTransition(session.state, event, source);
     session.updated = Date.now();
   }
   router.get("/config", (_req, res) =>
-    res.json({ inventory, offers, gemini: !!ai }),
+    res.json({
+      inventory,
+      offers,
+      gemini: !!ai,
+      serpApi: marketSearch.configured,
+      liveVoice: voiceService.configured,
+    }),
   );
   router.get("/hardware", (_req, res) =>
     res.json(arduino?.status() || { connected: false }),
@@ -87,6 +116,40 @@ export function createToyoRouter(ai, arduino) {
     res.json({ token, state: session.state });
   });
   router.get("/session", get, (req, res) => res.json(req.toyo.state));
+  router.get("/voice/context", get, (req, res) =>
+    res.json(voiceContext(req.toyo)),
+  );
+  // Stop must work even if the screen revision changed while the user was speaking.
+  router.post("/voice/stop", get, (req, res) => {
+    if (req.body?.voiceSessionId === req.toyo.voiceLease?.id) {
+      req.toyo.voiceLease = null;
+      req.toyo.voiceDraft = null;
+      req.toyo.voiceCalls = new Map();
+    }
+    res.json({ stopped: true });
+  });
+  let store = reservationStore;
+  const reservations = () => (store ??= createReservationStore());
+  router.get("/reservation/export", get, async (req, res) => {
+    try {
+      const receipt = await reservations().get(req.toyoToken);
+      if (!receipt)
+        return res.status(404).json({ error: "Save your reservation first." });
+      const csv = req.query.format === "csv";
+      res.set("Cache-Control", "no-store");
+      res.attachment(`toyo-reservation-${receipt.id}.${csv ? "csv" : "json"}`);
+      if (csv) return res.type("text/csv").send(reservationCsv(receipt));
+      return res
+        .type("application/json")
+        .send(JSON.stringify(receipt, null, 2));
+    } catch {
+      res
+        .status(503)
+        .json({
+          error: "Reservation database unavailable. Try again shortly.",
+        });
+    }
+  });
   router.use(get);
   router.use((req, res, next) => {
     if (req.toyo.busy || req.body?.revision !== req.toyo.state.revision)
@@ -94,6 +157,23 @@ export function createToyoRouter(ai, arduino) {
         error: "TOYO has updated this session. Try again with the latest view.",
       });
     next();
+  });
+  router.post("/reservation", async (req, res) => {
+    try {
+      const receipt = await reservations().save(
+        req.toyoToken,
+        req.toyo.state,
+        req.body.contact,
+      );
+      res.json({ id: receipt.id, createdAt: receipt.createdAt });
+    } catch (error) {
+      res.status(400).json({
+        error:
+          error instanceof z.ZodError
+            ? "Enter your name, a valid phone number and permission to save."
+            : "Could not save the reservation. Confirm your car plan and try again.",
+      });
+    }
   });
   router.post("/event", (req, res) => {
     const event = eventSchema.safeParse(req.body.event);
@@ -110,6 +190,128 @@ export function createToyoRouter(ai, arduino) {
             ? "Check the entered values and required acknowledgments."
             : error.message,
       });
+    }
+  });
+  router.post("/voice/token", async (req, res) => {
+    if (!voiceService.configured)
+      return res.status(503).json({
+        error:
+          "Gemini Live is not configured on the backend. Add GEMINI_API_KEY and restart.",
+      });
+    if (req.toyo.voiceMintBusy)
+      return res
+        .status(429)
+        .json({ error: "A voice connection is already being prepared." });
+    req.toyo.voiceMintBusy = true;
+    try {
+      res.json(await voiceService.issue(req.toyo));
+    } catch {
+      res.status(503).json({
+        error:
+          "Could not start Gemini Live. Check the backend Gemini key, Live model access, and GEMINI_LIVE_MODEL configuration.",
+      });
+    } finally {
+      req.toyo.voiceMintBusy = false;
+    }
+  });
+  router.post("/voice/tool", (req, res) => {
+    const parsed = z
+      .object({
+        revision: z.number().int().nonnegative(),
+        voiceSessionId: z.string(),
+        callId: z.string().min(1).max(160),
+        name: z.enum(
+          voiceTools
+            .filter((tool) => tool.name !== "get_shopping_context")
+            .map((tool) => tool.name),
+        ),
+        args: z.record(z.string(), z.unknown()),
+      })
+      .strict()
+      .safeParse(req.body);
+    if (!parsed.success)
+      return res.status(400).json({ error: "Invalid voice tool request." });
+    const input = parsed.data;
+    const session = req.toyo;
+    if (
+      !session.voiceLease ||
+      session.voiceLease.id !== input.voiceSessionId ||
+      Date.now() >= session.voiceLease.expires
+    )
+      return res.status(409).json({
+        error:
+          "Voice mode has stopped or expired. Click Voice mode to reconnect.",
+      });
+    if (input.args.revision !== input.revision)
+      return res
+        .status(409)
+        .json({ error: "Voice revision does not match the current screen." });
+    const previous = session.voiceCalls?.get(input.callId);
+    const signature = JSON.stringify([input.name, input.args]);
+    if (previous)
+      return previous.signature === signature
+        ? res.json(previous.result)
+        : res.status(409).json({
+            error: "A voice call ID cannot be reused for a different action.",
+          });
+    try {
+      const result = executeVoiceTool(session, input.name, input.args);
+      session.browserArm = null;
+      arduino?.disarm(req.toyoToken);
+      if (session.voiceCalls.size >= 100)
+        session.voiceCalls.delete(session.voiceCalls.keys().next().value);
+      session.voiceCalls.set(input.callId, { signature, result });
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({
+        error:
+          error instanceof z.ZodError
+            ? "Check the spoken details: use nonnegative amounts, a supported APR and a 36, 48, 60 or 72 month term."
+            : error.message,
+      });
+    }
+  });
+  router.post("/market-search", async (req, res) => {
+    const input = marketSearchSchema.safeParse(req.body);
+    if (!input.success)
+      return res.status(400).json({
+        error: "Choose prices or offers and use a valid five-digit ZIP code.",
+      });
+    const session = req.toyo;
+    if (
+      session.state.stage !== "dealer" ||
+      session.state.vehicleId !== input.data.vehicleId
+    )
+      return res
+        .status(409)
+        .json({ error: "Select this vehicle in the garage before searching." });
+    if (session.searchBusy)
+      return res
+        .status(429)
+        .json({ error: "A search is already running. Wait for its results." });
+    const revision = session.state.revision;
+    const vehicle = inventory.find((car) => car.id === input.data.vehicleId);
+    if (!vehicle)
+      return res.status(400).json({ error: "Unknown catalog vehicle." });
+    session.searchBusy = true;
+    try {
+      const result = await marketSearch.search(vehicle, input.data);
+      if (session.state.revision !== revision)
+        return res.status(409).json({
+          error:
+            "Your vehicle selection changed during the search. Search again for the current choice.",
+        });
+      // Search snippets never mutate inventory prices, rebates, quotes or session revisions.
+      res.json(result);
+    } catch (error) {
+      res.status(error instanceof MarketSearchError ? error.status : 502).json({
+        error:
+          error instanceof MarketSearchError
+            ? error.message
+            : "Search is temporarily unavailable. Try again later.",
+      });
+    } finally {
+      session.searchBusy = false;
     }
   });
   router.post("/recommend", async (req, res) => {
@@ -183,6 +385,10 @@ export function createToyoRouter(ai, arduino) {
     const session = req.toyo;
     const { stage, revision } = session.state;
     try {
+      if (session.state.stage === "checkout" && session.voiceDraft)
+        throw new Error(
+          "Finish the pending voice readback before arming checkout.",
+        );
       arduinoAction(session.state, 1);
       if (!arduino) throw new Error("Arduino is not configured.");
       session.browserArm = null;
@@ -210,6 +416,10 @@ export function createToyoRouter(ai, arduino) {
   });
   router.post("/browser-serial/arm", (req, res) => {
     try {
+      if (req.toyo.state.stage === "checkout" && req.toyo.voiceDraft)
+        throw new Error(
+          "Finish the pending voice readback before arming checkout.",
+        );
       arduinoAction(req.toyo.state, 1);
       arduino?.disarm(req.toyoToken);
       const nonce = randomBytes(12).toString("hex");

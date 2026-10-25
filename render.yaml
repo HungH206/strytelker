@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: strytelker-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: ARDUINO_PORT
+        value: ""
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: TIGER_DATABASE_URL
+        sync: false
+      - key: RESERVATION_ADMIN_TOKEN
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
