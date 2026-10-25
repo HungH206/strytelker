@@ -1,4 +1,4 @@
-# TOYO Pocket Agent
+# TOYO Pocket Agent (A custom tech from Rizzk)
 
 A Toyota shopping pitch with a pink 3D town, TOYO as your guide, a photo garage, financing assumptions, and a simulated checkout. Cinderella has been removed from the main experience. The original LumiWorld storybook remains at `/?lumi`.
 
@@ -174,7 +174,7 @@ Sessions live in server memory and expire after two hours. Reloading starts a ne
 
 ### Customer reservations and downloads
 
-After an affordable plan is confirmed with the magic wand, the completion screen asks for the customer's name, phone number (including country code), and permission to save. Voice mode closes before the contact form. Contact details are excluded from Gemini's shopping context. Saving creates a **demo reservation**, not a dealer booking or SMS confirmation.
+After an affordable plan is confirmed with the magic wand, the completion screen asks for the customer's name, phone number (including country code), and permission to save. The buyer can type contact details or opt into reservation dictation through Voice mode. Dictated contact details are processed by Gemini and read back before filling the form; manually typed contact details are not added to Gemini context. Saving creates a **demo reservation**, not a dealer booking or SMS confirmation.
 
 The backend stores reservations in a separate SQLite database at `.local/reservations.sqlite` (ignored by Git), configurable through `RESERVATIONS_DB_PATH`. Each record contains contact details and a server-generated snapshot of the selected car, finance assumptions, calculated quote, selected rebate and insurance assumptions. Retries for the same journey return the existing record. JSON and CSV downloads require the current private journey token; download before refreshing or starting a new journey. Saved database records survive a local server restart, but browser sessions and download access do not. No public reservation listing is exposed.
 
@@ -194,3 +194,17 @@ Tiger storage uses ordinary PostgreSQL tables: `toyo_customers` → `toyo_reserv
 For the hosted app, configure `TIGER_DATABASE_URL`, optional `TIGER_CA_CERT`, and `RESERVATION_ADMIN_TOKEN` on the **Node backend service**. Vercel continues using `TOYO_BACKEND_URL` for the gateway; it does not need the database URL or staff key. Open `https://your-site/?monitor` over HTTPS. Tiger Console's Data view can also query these tables directly to build internal reports.
 
 Verification: `npm test`, `npm run build`, and `npm run verify:reservations`. The integration check requires `TEST_PG_SOCKET` pointing to a disposable local PostgreSQL Unix socket (optional `TEST_PG_PORT`, default 55439); it writes synthetic test records. Never point it at the customer database.
+
+
+### Voice-assisted reservation and Arduino submission
+
+After confirming an affordable car plan, keep or activate **Voice mode** to dictate a name and complete phone number, including country code. TOYO asks permission to collect these by voice, clarifies spelling/digits, prepares a contact readback, and asks for confirmation. Confirming that readback fills the form; it never gives storage consent or saves a reservation. Spoken contact details are sent to Gemini and appear in the tab's conversation transcript. Typing remains available.
+
+Check the name, every phone digit, the selected car and plan, then check both the storage-consent and accuracy boxes. Click **Review reservation for submission**. This freezes an exact server-validated snapshot. Say **“save my reservation”** in Voice mode to let TOYO persist it through `save_reservation`, or press D2 once when D2 controls are enabled and connected. **Save demo reservation** is the browser equivalent. Voice readback confirmation alone does not authorize saving: TOYO asks a separate save question after review. Voice stays active to report the saved reference; use Stop voice mode to release the microphone. **Revise contact details** invalidates any armed press before allowing edits. Double presses, stale challenges, and pending voice readbacks cannot submit. The saved reference and JSON/CSV downloads appear after persistence succeeds. Both browser USB and local bridge transports are supported; the hosted site uses browser USB.
+
+Run `npm run verify:reservation-controls` for the synthetic server integration check covering voice readback, manual consent/review gates, both Arduino transports, duplicate/stale/double press rejection, explicit voice submission, and saved exports. Real Google speech recognition and physical Arduino testing require the connected equipment and account.
+
+
+### Voice backup when D2 is unavailable
+
+Activate Voice mode and respond to TOYO's current question. Say **confirm** for the displayed HQ option or car selection, **no** for the next HQ option, or **next car** to browse. TOYO uses `navigate_step` with the current screen revision and exact displayed car ID. At checkout, TOYO first reads back the car and reviewed finance/insurance plan and asks a separate final confirmation question; only then does a spoken confirmation complete the demo checkout. Pending readbacks, wrong car IDs, unfinished insurance review, and stale revisions are rejected. Reservation saving still requires the on-screen consent/accuracy review and a separate save instruction. D2 and browser buttons remain available.

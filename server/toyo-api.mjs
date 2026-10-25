@@ -1,4 +1,8 @@
-import { createReservationStore, reservationCsv } from "./reservations.mjs";
+import {
+  createReservationStore,
+  reservationCsv,
+  contactSchema,
+} from "./reservations.mjs";
 import { Router } from "express";
 import {
   createVoiceService,
@@ -143,11 +147,9 @@ export function createToyoRouter(
         .type("application/json")
         .send(JSON.stringify(receipt, null, 2));
     } catch {
-      res
-        .status(503)
-        .json({
-          error: "Reservation database unavailable. Try again shortly.",
-        });
+      res.status(503).json({
+        error: "Reservation database unavailable. Try again shortly.",
+      });
     }
   });
   router.use(get);
@@ -158,20 +160,92 @@ export function createToyoRouter(
       });
     next();
   });
-  router.post("/reservation", async (req, res) => {
+  async function submitReservation(session, token, source) {
+    if (
+      session.busy ||
+      !session.state.reservationReady ||
+      !session.reservationDraft ||
+      session.state.reservationId ||
+      session.voiceDraft
+    )
+      throw new Error(
+        "Review the current reservation and agree to save before submitting.",
+      );
+    session.busy = true;
+    session.browserArm = null;
+    arduino?.disarm(token);
     try {
       const receipt = await reservations().save(
-        req.toyoToken,
-        req.toyo.state,
-        req.body.contact,
+        token,
+        { ...session.state, reservationSubmissionSource: source },
+        session.reservationDraft,
       );
-      res.json({ id: receipt.id, createdAt: receipt.createdAt });
-    } catch (error) {
-      res.status(400).json({
+      session.reservationDraft = null;
+      session.reservationContact = null;
+      session.state = {
+        ...session.state,
+        revision: session.state.revision + 1,
+        reservationReady: false,
+        reservationId: receipt.id,
+        reservationError: null,
+        reservationSource: source,
+      };
+      session.updated = Date.now();
+      return session.state;
+    } finally {
+      session.busy = false;
+    }
+  }
+  router.post("/reservation/prepare", (req, res) => {
+    const session = req.toyo;
+    const parsed = contactSchema.safeParse(req.body.contact);
+    if (
+      !parsed.success ||
+      req.body.reviewed !== true ||
+      session.voiceDraft ||
+      session.state.stage !== "complete" ||
+      session.state.outcome !== "simulated_purchase" ||
+      session.state.reservationId
+    )
+      return res.status(400).json({
         error:
-          error instanceof z.ZodError
-            ? "Enter your name, a valid phone number and permission to save."
-            : "Could not save the reservation. Confirm your car plan and try again.",
+          "Confirm the car, finish voice readback, review contact details and agree to save first.",
+      });
+    session.reservationDraft = parsed.data;
+    session.reservationContact = null;
+    session.browserArm = null;
+    arduino?.disarm(req.toyoToken);
+    session.state = {
+      ...session.state,
+      revision: session.state.revision + 1,
+      reservationReady: true,
+      reservationError: null,
+    };
+    session.updated = Date.now();
+    res.json(session.state);
+  });
+  router.post("/reservation/cancel", (req, res) => {
+    if (req.toyo.state.reservationId)
+      return res.status(409).json({ error: "Reservation already saved." });
+    req.toyo.reservationDraft = null;
+    req.toyo.reservationContact = null;
+    req.toyo.voiceDraft = null;
+    req.toyo.browserArm = null;
+    arduino?.disarm(req.toyoToken);
+    req.toyo.state = {
+      ...req.toyo.state,
+      revision: req.toyo.state.revision + 1,
+      reservationReady: false,
+    };
+    res.json(req.toyo.state);
+  });
+  router.post("/reservation", async (req, res) => {
+    try {
+      res.json(await submitReservation(req.toyo, req.toyoToken, "simulator"));
+    } catch {
+      res.status(409).json({
+        error:
+          "Could not save the reviewed reservation. Check the details and database connection, then retry.",
       });
     }
   });
@@ -214,7 +288,7 @@ export function createToyoRouter(
       req.toyo.voiceMintBusy = false;
     }
   });
-  router.post("/voice/tool", (req, res) => {
+  router.post("/voice/tool", async (req, res) => {
     const parsed = z
       .object({
         revision: z.number().int().nonnegative(),
@@ -255,7 +329,17 @@ export function createToyoRouter(
             error: "A voice call ID cannot be reused for a different action.",
           });
     try {
-      const result = executeVoiceTool(session, input.name, input.args);
+      let result;
+      if (input.name === "save_reservation") {
+        z.object({
+          revision: z.number().int().nonnegative(),
+          userConfirmed: z.literal(true),
+        })
+          .strict()
+          .parse(input.args);
+        await submitReservation(session, req.toyoToken, "voice");
+        result = voiceContext(session);
+      } else result = executeVoiceTool(session, input.name, input.args);
       session.browserArm = null;
       arduino?.disarm(req.toyoToken);
       if (session.voiceCalls.size >= 100)
@@ -266,7 +350,7 @@ export function createToyoRouter(
       res.status(400).json({
         error:
           error instanceof z.ZodError
-            ? "Check the spoken details: use nonnegative amounts, a supported APR and a 36, 48, 60 or 72 month term."
+            ? "Check the spoken details and confirm the requested action explicitly. Finance needs valid amounts, APR and a supported loan term."
             : error.message,
       });
     }
@@ -393,7 +477,7 @@ export function createToyoRouter(
       if (!arduino) throw new Error("Arduino is not configured.");
       session.browserArm = null;
       const nonce = arduino.arm(
-        (count) => {
+        async (count) => {
           if (
             session.busy ||
             session.state.revision !== revision ||
@@ -402,12 +486,23 @@ export function createToyoRouter(
             return;
           try {
             const event = arduinoAction(session.state, count);
-            apply(session, event, "hardware");
+            if (event.type === "SUBMIT_RESERVATION")
+              await submitReservation(session, req.toyoToken, "hardware");
+            else apply(session, event, "hardware");
           } catch {
-            /* Invalid or empty selections never advance. */
+            if (session.state.stage === "complete")
+              session.state = {
+                ...session.state,
+                revision: session.state.revision + 1,
+                reservationError:
+                  "Reservation was not saved. Check the database connection and retry with one D2 press or Save demo reservation.",
+              };
           }
         },
-        { owner: req.toyoToken, gestures: stage !== "checkout" },
+        {
+          owner: req.toyoToken,
+          gestures: stage !== "checkout" && stage !== "complete",
+        },
       );
       res.json({ armed: true, expiresIn: 30, nonce });
     } catch (error) {
@@ -431,7 +526,9 @@ export function createToyoRouter(
       res.json({
         nonce,
         expiresIn: 30,
-        gestures: req.toyo.state.stage !== "checkout",
+        gestures:
+          req.toyo.state.stage !== "checkout" &&
+          req.toyo.state.stage !== "complete",
       });
     } catch (error) {
       res.status(409).json({ error: error.message });
@@ -442,7 +539,7 @@ export function createToyoRouter(
       req.toyo.browserArm = null;
     res.json({ armed: false });
   });
-  router.post("/browser-serial/press", (req, res) => {
+  router.post("/browser-serial/press", async (req, res) => {
     const body = z
       .object({
         revision: z.number().int().nonnegative(),
@@ -467,7 +564,9 @@ export function createToyoRouter(
     req.toyo.browserArm = null;
     try {
       const event = arduinoAction(req.toyo.state, body.data.count);
-      apply(req.toyo, event, "browser_serial");
+      if (event.type === "SUBMIT_RESERVATION")
+        await submitReservation(req.toyo, req.toyoToken, "browser_serial");
+      else apply(req.toyo, event, "browser_serial");
       res.json(req.toyo.state);
     } catch (error) {
       res.status(409).json({ error: error.message });

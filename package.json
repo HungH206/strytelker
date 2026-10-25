@@ -17,7 +17,8 @@
     "verify:deployment": "node scripts/verify-deployment.mjs",
     "verify:market-search": "node scripts/verify-market-search.mjs",
     "verify:voice": "node scripts/verify-voice.mjs",
-    "verify:reservations": "node scripts/verify-reservations.mjs"
+    "verify:reservations": "node scripts/verify-reservations.mjs",
+    "verify:reservation-controls": "node scripts/verify-reservation-controls.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.0.0",

@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { inventory } from "./toyo-engine.mjs";
 
-const contactSchema = z
+export const contactSchema = z
   .object({
     name: z
       .string()
@@ -53,6 +53,8 @@ export function buildReservation(state, contact) {
     insurance: state.insurance,
     offerId: state.offerId,
     confirmationSource: state.confirmationSource,
+    reservationSubmissionSource:
+      state.reservationSubmissionSource || "simulator",
   };
 }
 

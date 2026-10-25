@@ -17,17 +17,19 @@ import {
 type Draft = {
   id: string;
   revision: number;
-  kind: "finance" | "insurance";
+  kind: "finance" | "insurance" | "reservation";
   event: {
+    contact?: { name: string; phone: string };
     finance?: Finance;
     offerId?: string | null;
     insurance?: { mode: string; monthly: number };
   };
-  quote: Quote;
+  quote?: Quote;
 };
 type Context = {
   state: ShoppingState;
   draft: Draft | null;
+  reservationContact?: { id: string; name: string; phone: string } | null;
   [key: string]: unknown;
 };
 type Token = LiveCredentials & {
@@ -53,6 +55,7 @@ export default function VoiceMode({
   lock,
   onActiveChange,
   onDraft,
+  onReservationContact,
 }: {
   state: ShoppingState;
   available: boolean;
@@ -61,6 +64,11 @@ export default function VoiceMode({
   lock: MutableRefObject<boolean>;
   onActiveChange: (active: boolean) => void;
   onDraft: (draft: Draft | null) => void;
+  onReservationContact?: (contact: {
+    id: string;
+    name: string;
+    phone: string;
+  }) => void;
 }) {
   const [phase, setPhase] = useState<"off" | "connecting" | "live">("off");
   const [activity, setActivity] = useState("Listening");
@@ -78,8 +86,14 @@ export default function VoiceMode({
   const revision = useRef(state.revision);
   const queue = useRef(Promise.resolve());
   const cancelled = useRef(new Set<string>());
-  const live = useRef({ api, state, onActiveChange, onDraft });
-  live.current = { api, state, onActiveChange, onDraft };
+  const live = useRef({
+    api,
+    state,
+    onActiveChange,
+    onDraft,
+    onReservationContact,
+  });
+  live.current = { api, state, onActiveChange, onDraft, onReservationContact };
 
   function receiveContext(context: Context) {
     if (context.state.revision < live.current.state.revision) return;
@@ -89,6 +103,8 @@ export default function VoiceMode({
         ? context.state
         : current,
     );
+    if (context.reservationContact)
+      live.current.onReservationContact?.(context.reservationContact);
     setDraft(context.draft);
     live.current.onDraft(context.draft);
   }
@@ -348,7 +364,10 @@ export default function VoiceMode({
         </div>
         <button
           type="button"
-          disabled={phase === "off" && (!available || !supported)}
+          disabled={
+            phase === "off" &&
+            (!available || !supported || !!state.reservationId)
+          }
           aria-pressed={phase !== "off"}
           onClick={() => (phase === "off" ? void start() : stop())}
         >
@@ -356,9 +375,9 @@ export default function VoiceMode({
         </button>
       </div>
       <p>
-        TOYO talks you through HQ, the garage, financing, and payment +
-        insurance. It reads back your numbers and explains whether the plan
-        fits.
+        {state.stage === "complete"
+          ? "Optional reservation dictation: Voice mode sends your spoken name and phone number to Gemini to transcribe and read back. You can type instead. Consent to saving is a separate checkbox below. After reviewing, you can ask TOYO to save your reservation."
+          : "TOYO talks you through HQ, the garage, financing, and payment + insurance. It reads back your numbers and explains whether the plan fits. If D2 is unavailable, say “confirm” after TOYO asks you to approve the displayed option, car or final reviewed plan. Say “next car” to keep browsing."}
       </p>
       {!available && (
         <small>
@@ -417,9 +436,17 @@ export default function VoiceMode({
                 ))}
               <div>
                 <dt>Selected rebate</dt>
-                <dd>{draft.quote.offerName || "None"}</dd>
+                <dd>{draft.quote?.offerName || "None"}</dd>
               </div>
             </dl>
+          ) : draft.kind === "reservation" ? (
+            <p>
+              Name: <b>{draft.event.contact?.name}</b>
+              <br />
+              Phone: <b>{draft.event.contact?.phone}</b>. Check every digit.
+              Confirming fills the form; storage consent and submission are
+              still required.
+            </p>
           ) : (
             <p>
               {draft.event.insurance?.mode === "included"
@@ -428,7 +455,7 @@ export default function VoiceMode({
               . This is a simulation, not an insurance policy.
             </p>
           )}
-          <QuoteDetails quote={draft.quote} />
+          {draft.quote && <QuoteDetails quote={draft.quote} />}
           <p>
             Say yes after TOYO reads these back, correct any value, or confirm
             below. This saves the plan details, not a purchase.

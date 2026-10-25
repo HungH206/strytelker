@@ -56,6 +56,9 @@ export type ShoppingState = {
   recommendationSource: string;
   recommendation: string;
   browseAll: boolean;
+  reservationReady?: boolean;
+  reservationId?: string;
+  reservationError?: string;
 };
 const kinds = ["Sedan", "SUV", "Minivans and Trucks"];
 const ranges = ["$15,000–$25,000", "$25,000–$40,000", "Over $40,000"];
@@ -121,6 +124,12 @@ export default function ShoppingPanel({
   navigationRequest: { stop: Stop; id: number } | null;
   onStageChange: (stage: ShoppingStage) => void;
 }) {
+  const [reservationContact, setReservationContact] = useState<{
+    id: string;
+    name: string;
+    phone: string;
+  } | null>(null);
+  const [reservationBusy, setReservationBusy] = useState(false);
   const [state, setState] = useState<ShoppingState | null>(null);
   const [inventory, setInventory] = useState<CatalogVehicle[]>([]);
   const [offers, setOffers] = useState<RebateOffer[]>([]);
@@ -161,7 +170,7 @@ export default function ShoppingPanel({
   }
   const arduino = useArduinoControls({
     state,
-    busy: busy || voiceDraftActive,
+    busy: busy || voiceDraftActive || reservationBusy,
     lock,
     api,
     setState,
@@ -180,6 +189,7 @@ export default function ShoppingPanel({
       const result = await api("sessions", {});
       if (generation !== lifecycle.current) return;
       token.current = result.token;
+      setReservationContact(null);
       setState(result.state);
       setFinance(defaults);
       setOfferId(null);
@@ -378,32 +388,35 @@ export default function ShoppingPanel({
           </button>
         </div>
       </div>
-      {state && state.stage !== "complete" && (
-        <VoiceMode
-          key={token.current}
-          state={state}
-          available={voiceAvailable}
-          api={api}
-          setState={setState}
-          lock={lock}
-          onActiveChange={setVoiceActive}
-          onDraft={(draft) => {
-            setVoiceDraftActive(!!draft);
-            if (draft?.event.finance) {
-              setFinance(draft.event.finance);
-              setOfferId(draft.event.offerId || null);
-              setOfferEligibility(!!draft.event.offerId);
-            }
-            if (draft?.event.insurance) {
-              setInsuranceMode(
-                draft.event.insurance.mode as "included" | "additional",
-              );
-              setInsuranceMonthly(draft.event.insurance.monthly);
-              setAccepted(false);
-            }
-          }}
-        />
-      )}
+      {state &&
+        (state.stage !== "complete" ||
+          state.outcome === "simulated_purchase") && (
+          <VoiceMode
+            key={token.current}
+            state={state}
+            available={voiceAvailable}
+            api={api}
+            setState={setState}
+            lock={lock}
+            onActiveChange={setVoiceActive}
+            onReservationContact={setReservationContact}
+            onDraft={(draft) => {
+              setVoiceDraftActive(!!draft);
+              if (draft?.event.finance) {
+                setFinance(draft.event.finance);
+                setOfferId(draft.event.offerId || null);
+                setOfferEligibility(!!draft.event.offerId);
+              }
+              if (draft?.event.insurance) {
+                setInsuranceMode(
+                  draft.event.insurance.mode as "included" | "additional",
+                );
+                setInsuranceMonthly(draft.event.insurance.monthly);
+                setAccepted(false);
+              }
+            }}
+          />
+        )}
       <div className="hardware-card">
         <div>
           <b>
@@ -481,7 +494,9 @@ export default function ShoppingPanel({
             ? "1 press = Yes · 2 quick presses = No"
             : state?.stage === "dealer"
               ? "1 press = Next car · 2 quick presses = Choose car"
-              : "After review: 1 press = Magic wand confirmation"}
+              : state?.stage === "complete"
+                ? "After reservation review: 1 press = Submit reservation"
+                : "After review: 1 press = Magic wand confirmation"}
         </p>
         <small role="status">{arduino.status}</small>
       </div>
@@ -1037,7 +1052,9 @@ export default function ShoppingPanel({
                     ? "Confirmed by your Arduino magic wand"
                     : state.confirmationSource === "browser_serial"
                       ? "Confirmed through browser USB serial"
-                      : "Confirmed with the browser magic wand"}
+                      : state.confirmationSource === "voice"
+                        ? "Confirmed by your voice instruction to TOYO"
+                        : "Confirmed with the browser magic wand"}
                 </b>
                 <p>
                   No money moved. No loan application or insurance policy was
@@ -1048,12 +1065,18 @@ export default function ShoppingPanel({
                 <ReservationForm
                   key={token.current}
                   token={token.current}
-                  revision={state.revision}
+                  state={state}
+                  api={api}
+                  setState={setState}
+                  contact={reservationContact}
+                  voicePending={voiceDraftActive}
+                  onBusy={setReservationBusy}
+                  lock={lock}
                 />
               )}
               <button
                 className="primary-button"
-                disabled={busy}
+                disabled={busy || reservationBusy}
                 onClick={start}
               >
                 Start a new TOYO journey ↗

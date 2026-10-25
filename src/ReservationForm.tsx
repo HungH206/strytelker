@@ -1,42 +1,76 @@
-import { useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useState,
+  type FormEvent,
+  type Dispatch,
+  type SetStateAction,
+  type MutableRefObject,
+} from "react";
+import type { ShoppingState } from "./ShoppingPanel";
 import { readApiJson } from "./api-json.mjs";
 
 export default function ReservationForm({
   token,
-  revision,
+  state,
+  api,
+  setState,
+  contact,
+  voicePending,
+  onBusy,
+  lock,
 }: {
   token: string;
-  revision: number;
+  state: ShoppingState;
+  api: (path: string, body?: unknown) => Promise<any>;
+  setState: Dispatch<SetStateAction<ShoppingState | null>>;
+  contact: { id: string; name: string; phone: string } | null;
+  voicePending: boolean;
+  onBusy: (value: boolean) => void;
+  lock: MutableRefObject<boolean>;
 }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [consent, setConsent] = useState(false);
-  const [receipt, setReceipt] = useState("");
+  const [reviewed, setReviewed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  async function save(event: FormEvent) {
-    event.preventDefault();
+  const receipt = state.reservationId || "";
+  useEffect(() => {
+    if (contact && !state.reservationReady && !receipt) {
+      setName(contact.name);
+      setPhone(contact.phone);
+      setConsent(false);
+      setReviewed(false);
+    }
+  }, [contact?.id]);
+  async function action(path: string, body: Record<string, unknown> = {}) {
+    if (lock.current) return;
+    lock.current = true;
     setBusy(true);
+    onBusy(true);
     setError("");
     try {
-      const response = await fetch("/api/toyo/reservation", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Journey-Token": token,
-        },
-        body: JSON.stringify({ revision, contact: { name, phone, consent } }),
-        signal: AbortSignal.timeout(15000),
-      });
-      const result = await readApiJson(response, "reservation");
-      setReceipt(result.id);
+      const latest = await api(path, { revision: state.revision, ...body });
+      setState(latest);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Could not save reservation.",
+        err instanceof Error ? err.message : "Reservation request failed.",
       );
     } finally {
+      lock.current = false;
       setBusy(false);
+      onBusy(false);
     }
+  }
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (voicePending) return;
+    await action(
+      state.reservationReady ? "reservation" : "reservation/prepare",
+      state.reservationReady
+        ? {}
+        : { contact: { name, phone, consent }, reviewed },
+    );
   }
   async function download(format: "json" | "csv") {
     setBusy(true);
@@ -84,7 +118,11 @@ export default function ReservationForm({
               required
               maxLength={120}
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              disabled={busy || !!state.reservationReady}
+              onChange={(e) => {
+                setName(e.target.value);
+                setReviewed(false);
+              }}
             />
           </label>
           <label>
@@ -96,7 +134,11 @@ export default function ReservationForm({
               required
               maxLength={40}
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              disabled={busy || !!state.reservationReady}
+              onChange={(e) => {
+                setPhone(e.target.value);
+                setReviewed(false);
+              }}
             />
           </label>
           <label className="reservation-consent">
@@ -104,6 +146,7 @@ export default function ReservationForm({
               type="checkbox"
               required
               checked={consent}
+              disabled={busy || !!state.reservationReady}
               onChange={(e) => setConsent(e.target.checked)}
             />{" "}
             I agree to save my contact details and confirmed plan for this
@@ -113,9 +156,40 @@ export default function ReservationForm({
             Review your name and phone number before saving. The phone number is
             not verified.
           </p>
-          <button className="primary-button" disabled={busy}>
-            {busy ? "Saving…" : "Save demo reservation"}
+          <label className="reservation-consent">
+            <input
+              type="checkbox"
+              required
+              checked={reviewed}
+              disabled={busy || !!state.reservationReady}
+              onChange={(e) => setReviewed(e.target.checked)}
+            />{" "}
+            I checked my name, every phone digit, and the displayed car and
+            finance plan.
+          </label>
+          {state.reservationReady && (
+            <p role="status">
+              Ready to save: {name} · {phone}. Say “save my reservation” in
+              Voice mode, press D2 once, or use Save demo reservation. D2
+              controls must be enabled above.
+            </p>
+          )}
+          <button className="primary-button" disabled={busy || voicePending}>
+            {busy
+              ? "Working…"
+              : state.reservationReady
+                ? "Save demo reservation"
+                : "Review reservation for submission"}
           </button>
+          {state.reservationReady && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void action("reservation/cancel")}
+            >
+              Revise contact details
+            </button>
+          )}
         </form>
       ) : (
         <div role="status">
@@ -131,7 +205,9 @@ export default function ReservationForm({
           </button>
         </div>
       )}
-      {error && <p role="alert">{error}</p>}
+      {(error || state.reservationError) && (
+        <p role="alert">{error || state.reservationError}</p>
+      )}
     </div>
   );
 }

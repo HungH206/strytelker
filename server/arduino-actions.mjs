@@ -1,6 +1,15 @@
 // Both transports share the same allowed actions and checkout review gate.
 export function arduinoAction(state, count) {
   if (![1, 2].includes(count)) throw new Error("Invalid button gesture.");
+  if (
+    state.stage === "complete" &&
+    state.reservationReady &&
+    !state.reservationId
+  ) {
+    if (count !== 1)
+      throw new Error("Use one press to submit the reviewed reservation.");
+    return { type: "SUBMIT_RESERVATION" };
+  }
   if (state.stage === "hq") return { type: "ANSWER", yes: count === 1 };
   if (state.stage === "dealer" && state.vehicleId)
     return { type: count === 1 ? "NEXT_CAR" : "CHOOSE_CAR" };

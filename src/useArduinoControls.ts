@@ -13,6 +13,8 @@ type InputState = {
   stage: string;
   vehicleId: string | null;
   reviewed: boolean;
+  reservationReady?: boolean;
+  reservationId?: string;
 };
 type Transport = "local" | "browser";
 type Api = (path: string, body?: unknown) => Promise<any>;
@@ -54,7 +56,10 @@ export function useArduinoControls<S extends InputState>({
     !!state &&
     (state.stage === "hq" ||
       (state.stage === "dealer" && !!state.vehicleId) ||
-      (state.stage === "checkout" && state.reviewed));
+      (state.stage === "checkout" && state.reviewed) ||
+      (state.stage === "complete" &&
+        state.reservationReady &&
+        !state.reservationId));
 
   useEffect(() => {
     alive.current = true;

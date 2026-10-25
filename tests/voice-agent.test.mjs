@@ -41,7 +41,8 @@ test("voice instruction covers all four offices, explicit activation controls an
     "one press",
     "two quick presses",
     "Read back",
-    "Never confirm a purchase yourself",
+    "Never infer final confirmation",
+    "voice confirmation backup",
   ])
     assert.ok(TOYO_VOICE_INSTRUCTIONS.includes(phrase));
   assert.ok(
@@ -162,4 +163,113 @@ test("insurance readback saves review but voice cannot select a car or confirm a
   assert.equal(session.state.stage, "checkout");
   assert.equal(session.state.quote.assumptions.ownershipCosts, 250);
   assert.throws(() => executeVoiceTool(session, "CONFIRM", { revision: 4 }));
+});
+
+test("reservation dictation requires a completed car and exact readback, and never consents or submits", () => {
+  const session = sessionAtFinance();
+  assert.throws(() =>
+    executeVoiceTool(session, "prepare_reservation", {
+      revision: 2,
+      name: "Example",
+      phone: "+15551234567",
+    }),
+  );
+  session.state = {
+    ...session.state,
+    stage: "complete",
+    outcome: "simulated_purchase",
+  };
+  const draft = executeVoiceTool(session, "prepare_reservation", {
+    revision: 2,
+    name: "Nguyễn Example",
+    phone: "+1 (555) 123-4567",
+  }).draft;
+  assert.equal(session.reservationContact, undefined);
+  assert.equal(draft.event.contact.phone, "+15551234567");
+  assert.throws(() =>
+    executeVoiceTool(session, "confirm_details", {
+      revision: 2,
+      draftId: draft.id,
+      userConfirmed: false,
+    }),
+  );
+  const corrected = executeVoiceTool(session, "prepare_reservation", {
+    revision: 2,
+    name: "Nguyễn Example",
+    phone: "+15557654321",
+  }).draft;
+  assert.throws(() =>
+    executeVoiceTool(session, "confirm_details", {
+      revision: 2,
+      draftId: draft.id,
+      userConfirmed: true,
+    }),
+  );
+  const result = executeVoiceTool(session, "confirm_details", {
+    revision: 2,
+    draftId: corrected.id,
+    userConfirmed: true,
+  });
+  assert.equal(result.reservationContact.phone, "+15557654321");
+  assert.equal(result.reservationContact.consent, undefined);
+  assert.equal(session.state.reservationReady, undefined);
+  assert.equal(session.state.reservationId, undefined);
+  assert.equal(JSON.stringify(session.state).includes("Nguyễn"), false);
+  assert.throws(() =>
+    executeVoiceTool(session, "submit_reservation", { revision: 3 }),
+  );
+  session.state.reservationReady = true;
+  assert.throws(() =>
+    executeVoiceTool(session, "prepare_reservation", {
+      revision: 3,
+      name: "Change",
+      phone: "+15551234567",
+    }),
+  );
+});
+
+test("explicit voice backup navigates displayed HQ/car and confirms checkout only after review", () => {
+  const session = { state: createShoppingSession(), updated: Date.now() };
+  const navigate = (action, extra = {}) =>
+    executeVoiceTool(session, "navigate_step", {
+      revision: session.state.revision,
+      action,
+      vehicleId: session.state.vehicleId || "",
+      userConfirmed: true,
+      ...extra,
+    });
+  assert.throws(() => navigate("hq_yes", { userConfirmed: false }));
+  navigate("hq_yes");
+  navigate("hq_yes");
+  assert.equal(session.state.stage, "dealer");
+  assert.throws(() => navigate("choose_car", { vehicleId: "different-car" }));
+  navigate("choose_car");
+  assert.equal(session.state.stage, "finance");
+  assert.throws(() => navigate("confirm_checkout"));
+  session.state = shoppingTransition(session.state, {
+    type: "FINANCE",
+    finance: {
+      method: "loan",
+      savings: 8000,
+      reserve: 2000,
+      monthlyBudget: 1000,
+      ownershipCosts: 150,
+      downPayment: 5000,
+      apr: 6.5,
+      months: 60,
+    },
+  });
+  assert.throws(() => navigate("confirm_checkout"));
+  session.state = shoppingTransition(session.state, {
+    type: "INSURANCE",
+    insurance: { mode: "included", monthly: 0, accepted: true },
+  });
+  session.voiceDraft = { id: "pending" };
+  assert.throws(() => navigate("confirm_checkout"));
+  session.voiceDraft = null;
+  const oldRevision = session.state.revision;
+  navigate("confirm_checkout");
+  assert.equal(session.state.stage, "complete");
+  assert.equal(session.state.confirmationSource, "voice");
+  assert.throws(() => navigate("confirm_checkout", { revision: oldRevision }));
 });
