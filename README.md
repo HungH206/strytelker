@@ -208,3 +208,11 @@ Run `npm run verify:reservation-controls` for the synthetic server integration c
 ### Voice backup when D2 is unavailable
 
 Activate Voice mode and respond to TOYO's current question. Say **confirm** for the displayed HQ option or car selection, **no** for the next HQ option, or **next car** to browse. TOYO uses `navigate_step` with the current screen revision and exact displayed car ID. At checkout, TOYO first reads back the car and reviewed finance/insurance plan and asks a separate final confirmation question; only then does a spoken confirmation complete the demo checkout. Pending readbacks, wrong car IDs, unfinished insurance review, and stale revisions are rejected. Reservation saving still requires the on-screen consent/accuracy review and a separate save instruction. D2 and browser buttons remain available.
+
+### Model-specific OTD estimates
+
+`data/otd-estimates.json` contains the nine supplied 2026 model estimates. Garage cards, TOYO voice context, finance calculations and new reservation snapshots use the exact taxes-and-fees amount for each mapped vehicle. Estimated OTD is MSRP plus those fees, before any selected rebate or loan interest. These are user-supplied illustrative values with no tax jurisdiction supplied, not verified dealer quotes. The non-hybrid Corolla was omitted from the supplied list and retains a clearly labeled $2,200 fallback fee assumption. Budget bands still filter MSRP.
+
+The backend seeds `toyota_otd_estimates` in Tiger PostgreSQL during its first reservation-store initialization (for example, when opening the authenticated monitor); local SQLite receives the same nine rows. `server/sql/otd-estimates.sql` can also be run directly in Tiger Console. It updates matching model names and inserts missing ones, so rerunning does not add duplicates; it also works with the originally supplied table structure. Existing duplicate rows, if any, are retained. Existing saved reservations keep their original quote snapshots.
+
+The JSON file is the application's versioned source for these assumptions; the database table mirrors it for reporting. Editing only the database table does not change the runtime calculator. Update the JSON and matching SQL seed together, then redeploy Render and Vercel to publish changes.

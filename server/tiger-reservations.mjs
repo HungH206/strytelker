@@ -49,6 +49,22 @@ export function createTigerReservationStore({
           "utf8",
         ),
       )
+      .then(async () => {
+        const client = await pool.connect();
+        try {
+          await client.query(
+            readFileSync(
+              new URL("./sql/otd-estimates.sql", import.meta.url),
+              "utf8",
+            ),
+          );
+        } catch (error) {
+          await client.query("ROLLBACK");
+          throw error;
+        } finally {
+          client.release();
+        }
+      })
       .catch((error) => {
         ready = undefined;
         throw error;

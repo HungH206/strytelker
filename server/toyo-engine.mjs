@@ -1,3 +1,4 @@
+import { vehicleEstimate } from "./otd-estimates.mjs";
 import { z } from "zod";
 import { getSelectedOffer } from "./offers.mjs";
 import { calculateFinancing } from "./drive-engine.mjs";
@@ -47,6 +48,7 @@ export const inventory = rawInventory.map((vehicle) => ({
       ? "Minivans and Trucks"
       : vehicle.body_type,
   price: vehicle.starting_msrp_usd,
+  ...vehicleEstimate(vehicle.id, vehicle.starting_msrp_usd),
   image: suppliedImages[vehicle.id] || null,
   imageNote: "",
   source: vehicle.official_url,

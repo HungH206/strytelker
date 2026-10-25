@@ -51,7 +51,7 @@ export function calculateFinancing(
   const vehicle = catalog.find((v) => v.id === vehicleId);
   if (!vehicle) throw new Error("Choose a vehicle first.");
   const rebate = money.max(vehicle.price).parse(rebateAmount);
-  const fees = 2200,
+  const fees = money.parse(vehicle.estimatedFees ?? 2200),
     total = cents(vehicle.price + fees - rebate),
     reasons = [];
   let principal = 0,
@@ -94,6 +94,8 @@ export function calculateFinancing(
     price: vehicle.price,
     rebate,
     fees,
+    estimatedOtdPrice: cents(vehicle.price + fees),
+    feeSource: vehicle.feeSource || "Illustrative fee assumption",
     total,
     principal,
     monthly,

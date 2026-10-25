@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 // Integration check against a disposable local PostgreSQL database; never a hosted customer database.
 import pg from "pg";
 import express from "express";
@@ -44,6 +45,36 @@ for (const store of stores) {
   ]);
   assert.equal(first.id, second.id);
   assert.equal((await store.list()).length, 1);
+  if (store.provider === "tiger") {
+    const audit = new pg.Client({
+      host: process.env.TEST_PG_SOCKET,
+      port: Number(process.env.TEST_PG_PORT) || 55439,
+      database: "postgres",
+    });
+    await audit.connect();
+    try {
+      await audit.query(
+        readFileSync(
+          new URL("../server/sql/otd-estimates.sql", import.meta.url),
+          "utf8",
+        ),
+      );
+      const result = await audit.query(
+        "SELECT model_name,base_msrp,taxes_and_fees,estimated_otd_price FROM toyota_otd_estimates",
+      );
+      assert.equal(result.rows.length, 9);
+      assert.equal(
+        result.rows.find((row) => row.model_name === "2026 Toyota bZ")
+          .estimated_otd_price,
+        "37784.25",
+      );
+      console.log(
+        "Tiger PostgreSQL OTD seed: nine exact estimates, rerun without duplicates passed.",
+      );
+    } finally {
+      await audit.end();
+    }
+  }
   assert.equal(await store.get("unrelated"), null);
   const app = express();
   app.use(express.json());

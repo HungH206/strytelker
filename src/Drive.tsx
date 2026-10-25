@@ -23,6 +23,8 @@ export type Quote = {
   appliedOfferId?: string | null;
   price: number;
   fees: number;
+  estimatedOtdPrice?: number;
+  feeSource?: string;
   total: number;
   principal: number;
   monthly: number;
@@ -730,8 +732,19 @@ export function QuoteDetails({ quote: q }: { quote: Quote }) {
   return (
     <dl className="quote-list">
       <div>
-        <dt>Vehicle + assumed taxes & fees</dt>
-        <dd>{dollars(q.price + q.fees)}</dd>
+        <dt>Base MSRP</dt>
+        <dd>{dollars(q.price)}</dd>
+      </div>
+      <div>
+        <dt>
+          Estimated taxes & fees
+          <small>{q.feeSource || "Illustrative fee assumption"}</small>
+        </dt>
+        <dd>{dollars(q.fees)}</dd>
+      </div>
+      <div>
+        <dt>Estimated OTD before rebate and loan interest</dt>
+        <dd>{dollars(q.estimatedOtdPrice ?? q.price + q.fees)}</dd>
       </div>
       {!!q.rebate && (
         <>

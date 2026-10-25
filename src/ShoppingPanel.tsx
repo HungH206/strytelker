@@ -24,6 +24,9 @@ export type CatalogVehicle = {
   bodyType: string;
   fuel: string;
   price: number;
+  estimatedFees: number;
+  estimatedOtdPrice: number;
+  feeSource: string;
   image: string | null;
   imageNote: string;
   source: string;
@@ -602,6 +605,22 @@ export default function ShoppingPanel({
                     </span>
                     <h3>{vehicle.name}</h3>
                     <p>{money(vehicle.price)} · Starting MSRP</p>
+                    <p>
+                      Estimated taxes & fees:{" "}
+                      {vehicle.estimatedFees.toLocaleString("en-US", {
+                        style: "currency",
+                        currency: "USD",
+                      })}
+                      <br />
+                      Estimated OTD:{" "}
+                      {vehicle.estimatedOtdPrice.toLocaleString("en-US", {
+                        style: "currency",
+                        currency: "USD",
+                      })}
+                    </p>
+                    <small>
+                      {vehicle.feeSource} · before rebates and interest
+                    </small>
                   </div>
                   {vehicle.imageNote && (
                     <p className="toyo-footnote">{vehicle.imageNote}</p>
@@ -873,9 +892,12 @@ export default function ShoppingPanel({
                   </div>
                 </fieldset>
                 <p className="toyo-footnote">
-                  The calculator adds $2,200 in assumed fees. Monthly budget
-                  includes the payment and running costs. Insurance can be
-                  included in running costs or added at checkout.
+                  Taxes and fees use the selected model's supplied estimate;
+                  models without one use a labeled $2,200 fallback. These are
+                  illustrative OTD estimates, not a dealer or
+                  jurisdiction-specific tax quote. Monthly budget includes the
+                  payment and running costs. Insurance can be included in
+                  running costs or added at checkout.
                 </p>
                 <button className="primary-button" disabled={busy}>
                   Calculate & visit payment + insurance →

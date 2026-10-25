@@ -1,3 +1,4 @@
+import { otdEstimates } from "./otd-estimates.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -74,6 +75,22 @@ export function createReservationStore(
   ); CREATE TABLE IF NOT EXISTS reservation_events (
     id TEXT PRIMARY KEY, reservation_id TEXT NOT NULL REFERENCES reservations(id), status TEXT NOT NULL, created_at TEXT NOT NULL
   )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS toyota_otd_estimates (
+    id INTEGER PRIMARY KEY, model_name TEXT NOT NULL UNIQUE, base_msrp NUMERIC NOT NULL,
+    taxes_and_fees NUMERIC NOT NULL, estimated_otd_price NUMERIC NOT NULL,
+    calculated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  const seedEstimate =
+    db.prepare(`INSERT INTO toyota_otd_estimates (model_name,base_msrp,taxes_and_fees,estimated_otd_price) VALUES (?,?,?,?)
+    ON CONFLICT(model_name) DO UPDATE SET base_msrp=excluded.base_msrp,taxes_and_fees=excluded.taxes_and_fees,estimated_otd_price=excluded.estimated_otd_price,calculated_at=CURRENT_TIMESTAMP
+    WHERE base_msrp!=excluded.base_msrp OR taxes_and_fees!=excluded.taxes_and_fees OR estimated_otd_price!=excluded.estimated_otd_price`);
+  for (const estimate of otdEstimates)
+    seedEstimate.run(
+      estimate.model_name,
+      estimate.base_msrp,
+      estimate.taxes_and_fees,
+      estimate.estimated_otd_price,
+    );
   return {
     provider: "sqlite",
     list() {
