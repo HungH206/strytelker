@@ -1,4 +1,4 @@
-# TOYO Pocket Agent (A custom tech from Rizzk)
+# TOYO Pocket Agent (A custom tech from NXT)
 
 Licensed under the [MIT License](LICENSE).
 
