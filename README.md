@@ -2,7 +2,7 @@
 
 Licensed under the [MIT License](LICENSE).
 
-A Toyota shopping pitch with a pink 3D town, TOYO as your guide, a photo garage, financing assumptions, and a simulated checkout. Cinderella has been removed from the main experience. The original LumiWorld storybook remains at `/?lumi`.
+A Toyota shopping pitch with a pink 3D town, TOYO as your guide, a photo garage, financing assumptions, and a simulated checkout. Cinderella has been removed from the main experience.
 
 ## Run
 
